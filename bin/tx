@@ -1,0 +1,47 @@
+#!/bin/sh
+set -e
+
+# Resolve install directory (follow symlinks for npm global installs)
+SELF="$0"
+while [ -L "$SELF" ]; do
+  DIR=$(cd "$(dirname "$SELF")" && pwd)
+  SELF=$(readlink "$SELF")
+  case "$SELF" in
+    /*) ;;
+    *) SELF="$DIR/$SELF" ;;
+  esac
+done
+TX_ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+# Source shared utilities (loads defaults, sources .txrc)
+. "$TX_ROOT/lib/common.sh"
+
+# Parse command
+COMMAND="${1:-status}"
+shift 2>/dev/null || true
+
+case "$COMMAND" in
+  --help|-h) COMMAND="help" ;;
+esac
+
+# Check for --help/-h flag on any command (e.g. tx serv --help)
+for _arg in "$@"; do
+  case "$_arg" in
+    --help|-h)
+      . "$TX_ROOT/lib/help.sh"
+      cmd_help "$COMMAND"
+      exit 0
+      ;;
+  esac
+done
+
+# Dispatch to command module
+COMMAND_FILE="$TX_ROOT/lib/${COMMAND}.sh"
+if [ ! -f "$COMMAND_FILE" ]; then
+  echo "tx: unknown command '$COMMAND'"
+  echo "Run 'tx help' for usage."
+  exit 1
+fi
+
+. "$COMMAND_FILE"
+cmd_"$COMMAND" "$@"
