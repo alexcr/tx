@@ -21,12 +21,13 @@ TX_TUNNEL_CMD="${TX_TUNNEL_CMD:-ngrok tcp 22}"
 TX_DB_CMD="${TX_DB_CMD:-}"
 TX_AUTO_OPEN="${TX_AUTO_OPEN:-false}"
 TX_AUTO_TMUX="${TX_AUTO_TMUX:-false}"
+TX_AUTO_START="${TX_AUTO_START:-false}"
 TX_INSTALL_CMD="${TX_INSTALL_CMD:-yarn install}"
 
 # Config scopes: user (~/.txrc) vs project (.txrc)
-TX_CONFIG_USER_KEYS="code tunnel auto_open db auto_tmux"
+TX_CONFIG_USER_KEYS="code tunnel auto_open db auto_tmux auto_start"
 TX_CONFIG_PROJECT_KEYS="port start url branch copy worktrees_dir install"
-TX_CONFIG_KEYS="port start url branch copy worktrees_dir install code tunnel db auto_open auto_tmux"
+TX_CONFIG_KEYS="port start url branch copy worktrees_dir install code tunnel db auto_open auto_tmux auto_start"
 
 # --- Config key-to-variable mapping ---
 tx_config_var() {
@@ -43,6 +44,7 @@ tx_config_var() {
     auto_open)     echo "TX_AUTO_OPEN" ;;
     install)       echo "TX_INSTALL_CMD" ;;
     auto_tmux)     echo "TX_AUTO_TMUX" ;;
+    auto_start)    echo "TX_AUTO_START" ;;
     *)             echo "" ;;
   esac
 }
@@ -62,6 +64,7 @@ tx_config_default() {
     auto_open)     echo "false" ;;
     install)       echo "yarn install" ;;
     auto_tmux)     echo "false" ;;
+    auto_start)    echo "false" ;;
   esac
 }
 

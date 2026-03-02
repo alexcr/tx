@@ -60,6 +60,7 @@ Two-tier config with shell variable format (`TX_VAR="value"`):
 | `db` | `TX_DB_CMD` | user | (empty) |
 | `auto_open` | `TX_AUTO_OPEN` | user | `false` |
 | `auto_tmux` | `TX_AUTO_TMUX` | user | `false` |
+| `auto_start` | `TX_AUTO_START` | user | `false` |
 
 Load order: hardcoded defaults → `~/.txrc` → `.txrc` (project overrides user overrides defaults).
 
@@ -96,6 +97,9 @@ Load order: hardcoded defaults → `~/.txrc` → `.txrc` (project overrides user
 ```bash
 # Start coding on a branch (creates worktree, launches claude, cleans up on exit)
 tx code -b fix/my-bug
+
+# Same, plus install deps and start dev server automatically
+tx code -s -b fix/my-bug
 
 # Start a dev server in background, open browser
 tx serv start -o

@@ -14,7 +14,7 @@ _tx() {
   case "${words[2]}" in
     config)
       if [ "$CURRENT" -eq 3 ]; then
-        compadd port start url branch copy worktrees_dir code tunnel db auto_open init reset
+        compadd port start url branch copy worktrees_dir code tunnel db auto_open auto_tmux auto_start install init reset
       elif [ "$CURRENT" -eq 4 ] && [ "${words[3]}" = "reset" ]; then
         compadd user project
       fi
@@ -49,7 +49,7 @@ _tx() {
       if [ "$CURRENT" -eq 3 ]; then
         compadd start attach
       else
-        compadd -- --root --tunnel --name --branch --attach --caffeinate
+        compadd -- --root --tunnel --name --branch --attach --caffeinate --install --start
       fi
       ;;
   esac

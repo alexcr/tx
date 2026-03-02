@@ -54,7 +54,7 @@ Config uses two files; the tool writes each key to the appropriate one:
 
 | Scope | File | Keys |
 |-------|------|------|
-| User | `~/.txrc` | code, tunnel, db, auto_open, auto_tmux |
+| User | `~/.txrc` | code, tunnel, db, auto_open, auto_tmux, auto_start |
 | Project | `.txrc` | port, start, url, branch, copy, worktrees_dir, install |
 
 ```bash
@@ -81,6 +81,7 @@ tx config reset user           # Delete ~/.txrc
 | db | user | (empty) | Background db command |
 | auto_open | user | false | Open browser after serv start |
 | auto_tmux | user | false | Auto-launch tx code in tmux |
+| auto_start | user | false | Auto-start dev server with tx code |
 
 ## Examples
 
@@ -99,6 +100,7 @@ tx wt add -b fix/my-bug     # Create worktree fix-my-bug on branch fix/my-bug
 
 # Code editor (creates worktree by default)
 tx code -b fix/my-bug       # Worktree "fix-my-bug" on branch fix/my-bug
+tx code -s -b fix/my-bug    # Same, plus install deps and start dev server
 tx code -r                  # Run in repo root instead
 tx code -t                  # Launch in tmux session
 tx code attach hotfix       # Reattach to tmux

@@ -11,7 +11,7 @@ Usage:
   tx config reset [user|project]  Delete config file (with confirmation)
 
 Keys:
-  User (~/.txrc):   code, tunnel, auto_open, db, auto_tmux
+  User (~/.txrc):   code, tunnel, auto_open, db, auto_tmux, auto_start
   Project (.txrc):  port, start, url, branch, copy, worktrees_dir
 EOF
 }
@@ -96,6 +96,7 @@ Flags:
   -a, --attach              Attach to existing session
   -c, --caffeinate          Prevent sleep
   -i, --install             Run install command after creating worktree (TX_INSTALL_CMD)
+  -s, --start               Run dev server after install (TX_START_CMD)
 EOF
 }
 

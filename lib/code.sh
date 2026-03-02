@@ -10,6 +10,8 @@ cmd_code() {
   local flag_attach=0
   local flag_caffeinate=0
   local flag_install=0
+  local flag_start=0
+  [ "$TX_AUTO_START" = "true" ] && flag_start=1
   local name=""
   local branch=""
   local attach_name=""
@@ -21,6 +23,7 @@ cmd_code() {
       --tunnel|-t)      flag_tunnel=1; shift ;;
       --caffeinate|-c)  flag_caffeinate=1; shift ;;
       --install|-i)     flag_install=1; shift ;;
+      --start|-s)       flag_start=1; shift ;;
       --attach|-a)    flag_attach=1; attach_name="${2:-}"; shift; shift 2>/dev/null || true ;;
       --name=*|-n=*)  name="${1#*=}"; shift ;;
       --name|-n)      name="$2"; shift 2 ;;
@@ -41,7 +44,7 @@ cmd_code() {
     return $?
   fi
 
-  _code_start "$flag_worktree" "$flag_tunnel" "$flag_caffeinate" "$name" "$branch" "$flag_install"
+  _code_start "$flag_worktree" "$flag_tunnel" "$flag_caffeinate" "$name" "$branch" "$flag_install" "$flag_start"
 }
 
 _code_start() {
@@ -51,7 +54,13 @@ _code_start() {
   local name="$4"
   local branch="$5"
   local flag_install="${6:-0}"
+  local flag_start="${7:-0}"
   local work_dir="$PWD"
+
+  # Start implies install — always install before starting
+  if [ "$flag_start" -eq 1 ]; then
+    flag_install=1
+  fi
 
   if [ "$flag_worktree" -eq 1 ]; then
     local wt_args=""
@@ -65,6 +74,12 @@ _code_start() {
       return 1
     fi
     cd "$work_dir" || return 1
+  fi
+
+  # Start dev server if requested
+  if [ "$flag_start" -eq 1 ]; then
+    cd "$work_dir" || return 1
+    _serv_start 0 0 "" ""
   fi
 
   local session_name
