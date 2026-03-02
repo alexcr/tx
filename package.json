@@ -1,6 +1,6 @@
 {
   "name": "@alexcrondon/tx",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Modular CLI for isolated dev environments using git worktrees",
   "bin": {
     "tx": "./bin/tx"
