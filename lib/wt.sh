@@ -88,6 +88,9 @@ _wt_add() {
   # Copy configured files
   _wt_copy_files "$worktree_path"
 
+  # Symlink .claude/ so worktrees inherit permissions and settings
+  _wt_link_claude_config "$worktree_path"
+
   # Symlink node_modules from repo root if it exists
   _wt_link_node_modules "$worktree_path"
 
@@ -143,6 +146,17 @@ _wt_copy_files() {
     done
     cd "$repo_root" || true
   done
+}
+
+_wt_link_claude_config() {
+  local target_dir="$1"
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+
+  [ -d "$repo_root/.claude" ] || return 0
+  [ -e "$target_dir/.claude" ] && return 0
+
+  ln -s "$repo_root/.claude" "$target_dir/.claude"
 }
 
 _wt_link_node_modules() {
