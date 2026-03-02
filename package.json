@@ -10,7 +10,7 @@
     "lib/"
   ],
   "scripts": {
-    "publish": "sh scripts/publish.sh"
+    "release": "sh scripts/release.sh"
   },
   "license": "MIT"
 }
