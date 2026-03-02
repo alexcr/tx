@@ -22,6 +22,7 @@ shift 2>/dev/null || true
 
 case "$COMMAND" in
   --help|-h) COMMAND="help" ;;
+  --version|-v) sed -n 's/.*"version": *"\(.*\)".*/\1/p' "$TX_ROOT/package.json"; exit 0 ;;
 esac
 
 # Check for --help/-h flag on any command (e.g. tx serv --help)

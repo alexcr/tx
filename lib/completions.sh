@@ -7,7 +7,7 @@ _tx() {
   local commands="config status serv tunnel db wt code nuke completions help"
 
   if [ "$CURRENT" -eq 2 ]; then
-    compadd ${=commands}
+    compadd ${=commands} -- --version --help
     return
   fi
 

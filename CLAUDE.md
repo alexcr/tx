@@ -40,6 +40,8 @@ lib/completions.sh  Zsh completion generation.
 | `tx status` | Show all resource statuses | — |
 | `tx nuke` | Stop everything, remove all worktrees | — |
 
+| `tx --version` | Show version from package.json | — |
+
 Default command (no args): `status`.
 
 ## Configuration

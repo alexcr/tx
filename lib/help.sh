@@ -136,6 +136,9 @@ tx — modular CLI for isolated dev environments
 Usage: tx [command] [subcommand] [flags]
         (no command = status)
 
+Flags:
+  --version, -v               Show version number
+
 Commands:
   config                    Manage project configuration (.txrc)
   status                    Show status (default when no command given)

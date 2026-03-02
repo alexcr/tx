@@ -45,6 +45,7 @@ tx serv start
 | `tx wt` | list | Git worktrees: add, remove, clean |
 | `tx code` | start | Launch editor/agent in worktree |
 | `tx nuke` | — | Stop everything, remove all worktrees |
+| `tx --version` | — | Show version number |
 
 Run `tx help` or `tx help <command>` for details.
 
