@@ -9,5 +9,8 @@
     "bin/",
     "lib/"
   ],
+  "scripts": {
+    "publish": "sh scripts/publish.sh"
+  },
   "license": "MIT"
 }
