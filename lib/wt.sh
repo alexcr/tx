@@ -74,8 +74,11 @@ _wt_add() {
   # Create worktree
   if [ -n "$branch" ]; then
     if git show-ref --verify --quiet "refs/heads/${branch}" 2>/dev/null; then
-      # Existing branch
+      # Existing local branch
       git worktree add "$worktree_path" "$branch"
+    elif git show-ref --verify --quiet "refs/remotes/origin/${branch}" 2>/dev/null; then
+      # Existing remote branch — check it out locally
+      git worktree add --track -b "$branch" "$worktree_path" "origin/${branch}"
     else
       # New branch from default
       git worktree add -b "$branch" "$worktree_path" "$TX_DEFAULT_BRANCH"
