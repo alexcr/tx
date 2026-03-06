@@ -53,13 +53,23 @@ EOF
 
 _help_db() {
   cat << 'EOF'
-tx db — Manage background db process (port-forward, etc.)
+tx db — Manage background db process and run queries
 
 Usage:
   tx db                     Show db process status (default)
   tx db start               Start configured db command in background
   tx db stop                Stop the db process
   tx db log                 Show db process output
+  tx db run <alias> "SQL"   Run a SQL query against a configured database
+  tx db list                List configured database aliases
+
+Database config (~/.tx-databases):
+  One line per database: alias:host:port:dbname:user
+  Passwords are read from ~/.pgpass (see PostgreSQL docs).
+
+  Example ~/.tx-databases:
+    main:localhost:2223:mydb:myuser
+    reports:localhost:2224:reportsdb:myuser
 EOF
 }
 

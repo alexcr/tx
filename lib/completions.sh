@@ -35,7 +35,7 @@ _tx() {
       ;;
     db)
       if [ "$CURRENT" -eq 3 ]; then
-        compadd start stop status log
+        compadd start stop status log run list
       fi
       ;;
     wt)
