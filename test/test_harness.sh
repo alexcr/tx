@@ -1,7 +1,7 @@
 #!/bin/sh
 . "$(dirname "$0")/helpers.sh"
 
-WS=$(make_workspace frontend backend)
+WS=$(make_workspace frontend backend) || exit 1
 
 it "creates the workspace root"
 assert_dir "$WS/.tx"
@@ -10,10 +10,10 @@ it "creates each repo as a git worktree-capable repo"
 assert_dir "$WS/frontend/.git"
 
 it "puts the repo on the default branch"
-assert_eq "$(git -C "$WS/frontend" rev-parse --abbrev-ref HEAD)" "main"
+assert_eq "$(_test_git -C "$WS/frontend" rev-parse --abbrev-ref HEAD)" "main"
 
 it "gives the repo an up-to-date origin"
-assert_eq "$(git -C "$WS/frontend" rev-list --count origin/main..main)" "0"
+assert_eq "$(_test_git -C "$WS/frontend" rev-list --count origin/main..main)" "0"
 
 it "reports a zero exit code from tx"
 tx_in "$WS/frontend" --version >/dev/null; TX_STATUS=$?

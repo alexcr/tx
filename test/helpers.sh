@@ -12,8 +12,18 @@ TX_BIN="$(cd "$(dirname "$0")/.." && pwd)/bin/tx"
 # An inert, test-owned HOME for tx runs, so a developer's real ~/.txrc cannot
 # leak into a test. Created once per test file; the target architecture reads
 # nothing from $HOME, so this is only belt-and-braces for the transition.
-TX_TEST_HOME="${TMPDIR:-/tmp}/tx-test.home"
-mkdir -p "$TX_TEST_HOME"
+# Deliberately named outside the tx-test.* fixture glob, so a stray
+# cleanup_workspace call can never delete it. mktemp keeps concurrent runs
+# (e.g. the suite running in two worktrees at once) from sharing one HOME.
+TX_TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/tx-home.XXXXXX") || exit 1
+[ -d "$TX_TEST_HOME" ] || { printf 'helpers.sh: could not create test HOME\n' >&2; exit 1; }
+
+# tx reads TX_* from the environment (lib/common.sh uses ${TX_FOO:-default}),
+# so a developer who exports any of these in their profile would get different
+# results from CI. Start every test file from the built-in defaults.
+unset TX_PORT_START TX_START_CMD TX_URL_TEMPLATE TX_DEFAULT_BRANCH TX_COPY \
+  TX_WORKTREES_DIR TX_INSTALL_CMD TX_CODE_CMD TX_TUNNEL_CMD TX_DB_CMD \
+  TX_AUTO_OPEN TX_AUTO_TMUX TX_AUTO_START TX_SERV_TIMEOUT
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -45,7 +55,9 @@ it() {
   TESTS_RUN=$((TESTS_RUN + 1))
   # Clear any status left by a previous tx_in, so a test that forgets its
   # `TX_STATUS=$?` trips the guard in assert_ok/assert_fails instead of
-  # silently asserting against the previous test's exit code.
+  # silently asserting against the previous test's exit code. Note this guard
+  # is per-`it`, not per-call: two tx_in calls under one `it` can still see a
+  # stale status if the second forgets its capture.
   TX_STATUS=""
 }
 
@@ -118,24 +130,28 @@ make_workspace() {
 }
 
 # Create a git repo <ws>/<name> with an origin remote it is up to date with.
-# Body is a subshell with `set -e` so any failing git step aborts non-zero.
+# Returns non-zero at the first failing step.
+#
+# The steps are chained with && rather than `set -e`: POSIX suppresses errexit
+# for a command used as an `if` condition, and that suppression carries into
+# this subshell, so a `set -e` here would be inert at the one call site that
+# matters (make_workspace's `if ! make_repo`). The chain is unconditional.
 make_repo() (
-  set -e
   ws="$1"
   name="$2"
   repo="$ws/$name"
   remote="$ws/.remotes/$name.git"
-  mkdir -p "$repo" "$(dirname "$remote")"
-  _test_git init --quiet --bare "$remote"
-  _test_git init --quiet -b main "$repo"
-  _test_git -C "$repo" config user.email tx@test
-  _test_git -C "$repo" config user.name tx
-  _test_git -C "$repo" config commit.gpgsign false
-  printf '%s\n' "$name" > "$repo/README.md"
-  _test_git -C "$repo" add README.md
-  _test_git -C "$repo" commit --quiet -m "init"
-  _test_git -C "$repo" remote add origin "$remote"
-  _test_git -C "$repo" push --quiet -u origin main
+  mkdir -p "$repo" "$(dirname "$remote")" &&
+    _test_git init --quiet --bare "$remote" &&
+    _test_git init --quiet -b main "$repo" &&
+    _test_git -C "$repo" config user.email tx@test &&
+    _test_git -C "$repo" config user.name tx &&
+    _test_git -C "$repo" config commit.gpgsign false &&
+    printf '%s\n' "$name" > "$repo/README.md" &&
+    _test_git -C "$repo" add README.md &&
+    _test_git -C "$repo" commit --quiet -m "init" &&
+    _test_git -C "$repo" remote add origin "$remote" &&
+    _test_git -C "$repo" push --quiet -u origin main
 )
 
 # Run tx from a directory, capturing stdout+stderr and tx's exit code.
@@ -166,6 +182,9 @@ cleanup_workspace() {
 }
 
 finish() {
+  case "$TX_TEST_HOME" in
+    /*/tx-home.*) rm -rf "$TX_TEST_HOME" ;;
+  esac
   echo ""
   printf '  %s tests, %s failed assertions\n' "$TESTS_RUN" "$TESTS_FAILED"
   [ "$TESTS_FAILED" -eq 0 ] || exit 1
