@@ -19,6 +19,19 @@
 - Commit after each task with the message given in the task's final step.
 - POSIX `sh` only: no `[[ ]]`, no arrays, no `local -n`, no `${var,,}`. `local` itself is fine — the existing code uses it and it works in dash, bash and zsh.
 - Every user-facing error goes to stderr and exits non-zero.
+- **Test call convention.** `tx_in` runs in a command substitution, so it cannot
+  set a variable in the caller. Every test that checks an exit code must capture
+  it on the same line:
+
+  ```sh
+  out=$(tx_in "$WS" wt add frontend/wt1); TX_STATUS=$?
+  assert_ok "$TX_STATUS"
+  ```
+
+  The task snippets below were written before this was discovered and omit the
+  `; TX_STATUS=$?` half — add it at every call site whose status you assert.
+  `it()` clears `TX_STATUS`, so a forgotten capture fails loudly rather than
+  silently reusing the previous call's status.
 
 ## Phase order
 
