@@ -1,19 +1,69 @@
 # lib/common.sh — shared utilities for tx
 # Sourced by bin/tx on every invocation. Do not execute directly.
 
+# --- Errors ---
+
+# tx_die "<message>" ["<hint>"]
+tx_die() {
+  printf 'tx: %s\n' "$1" >&2
+  [ -n "$2" ] && printf '    %s\n' "$2" >&2
+  exit 1
+}
+
+# --- Workspace root ---
+
+# Walk up from $1 (default $PWD) looking for a directory containing .tx/.
+# Prints the root on stdout, or returns 1.
+#
+# The walk tests every ancestor down to and including "/", so a .tx at the
+# filesystem root is found. `dirname /` is "/", so the loop must break on it
+# explicitly rather than rely on the condition, or it would spin forever.
+tx_find_root() {
+  local dir
+  dir=$(cd "${1:-$PWD}" 2>/dev/null && pwd -P) || return 1
+  while [ -n "$dir" ]; do
+    if [ -d "$dir/.tx" ]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    [ "$dir" = "/" ] && break
+    dir=$(dirname "$dir")
+  done
+  return 1
+}
+
+# Set TX_WS_ROOT or exit with a helpful message.
+tx_require_root() {
+  TX_WS_ROOT=$(tx_find_root) || tx_die \
+    "not inside a tx workspace." \
+    "Run 'tx init' in your workspace root (e.g. ~/toggl)."
+  TX_TX_DIR="$TX_WS_ROOT/.tx"
+  TX_WT_DIR="$TX_WS_ROOT/.worktrees"
+  TX_RUN_DIR="$TX_TX_DIR/run"
+  export TX_WS_ROOT TX_TX_DIR TX_WT_DIR TX_RUN_DIR
+}
+
+# Replace a leading $HOME with ~ for display.
+tx_tilde() {
+  local home="$HOME"
+  # With HOME unset/empty the patterns below would collapse to "/*" and rewrite
+  # every absolute path with a bogus ~. Fall through unchanged instead.
+  [ -z "$home" ] && { printf '%s\n' "$1"; return; }
+  # Strip a single trailing slash so HOME=/Users/alex/ still abbreviates.
+  # Leave HOME=/ untouched: stripping it to "" would re-break the guard above.
+  case "$home" in ?*/) home="${home%/}" ;; esac
+  case "$1" in
+    "$home"/*) printf '%s\n' "~${1#"$home"}" ;;
+    "$home") printf '~\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 # --- Default Configuration ---
 TX_PORT_START="${TX_PORT_START:-9001}"
 TX_START_CMD="${TX_START_CMD:-yarn start}"
 TX_URL_TEMPLATE="${TX_URL_TEMPLATE:-http://localhost:{PORT}}"
-if [ -z "$TX_DEFAULT_BRANCH" ]; then
-  if git rev-parse --verify refs/heads/main >/dev/null 2>&1; then
-    TX_DEFAULT_BRANCH="main"
-  elif git rev-parse --verify refs/heads/master >/dev/null 2>&1; then
-    TX_DEFAULT_BRANCH="master"
-  else
-    TX_DEFAULT_BRANCH="main"
-  fi
-fi
+TX_DEFAULT_BRANCH="${TX_DEFAULT_BRANCH:-}"
 TX_COPY="${TX_COPY:-}"
 TX_WORKTREES_DIR="${TX_WORKTREES_DIR:-.worktrees}"
 TX_CODE_CMD="${TX_CODE_CMD:-claude}"
@@ -108,9 +158,6 @@ _tx_project_root() {
   common_dir=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" && pwd) || return 1
   dirname "$common_dir"
 }
-
-_tx_config_apply_file "${HOME}/.txrc" $TX_CONFIG_USER_KEYS
-_tx_config_apply_file "$(_tx_project_root)/.txrc" $TX_CONFIG_PROJECT_KEYS
 
 # --- Shared Helpers ---
 
