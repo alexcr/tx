@@ -59,6 +59,48 @@ tx_tilde() {
   esac
 }
 
+# --- Projects ---
+
+# Is $1 the top level of a git repo?
+tx_is_repo() {
+  local top
+  top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [ "$(cd "$top" && pwd -P)" = "$(cd "$1" && pwd -P)" ]
+}
+
+# Print every project name under TX_WS_ROOT, one per line, sorted.
+tx_projects() {
+  local d name
+  for d in "$TX_WS_ROOT"/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    case "$name" in .*) continue ;; esac
+    tx_is_repo "$TX_WS_ROOT/$name" || continue
+    printf '%s\n' "$name"
+  done | sort
+}
+
+# Absolute path of a project, or die with the list of known projects.
+# Only accepts names the lister would emit: a direct, non-dotfile child that is
+# a repo top level. Reject empty, dotfile-leading, and slash-containing names
+# (which could otherwise escape the root, e.g. "../outside") before the check.
+tx_project_path() {
+  local name="$1"
+  case "$name" in
+    ""|.*|*/*) ;;
+    *)
+      if tx_is_repo "$TX_WS_ROOT/$name" 2>/dev/null; then
+        printf '%s\n' "$TX_WS_ROOT/$name"
+        return 0
+      fi
+      ;;
+  esac
+  local known
+  known=$(tx_projects | tr '\n' ' ')
+  known="${known% }"
+  tx_die "no project '$name'." "Projects: ${known:-(none)}"
+}
+
 # --- Default Configuration ---
 TX_PORT_START="${TX_PORT_START:-9001}"
 TX_START_CMD="${TX_START_CMD:-yarn start}"

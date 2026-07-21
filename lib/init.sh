@@ -25,3 +25,8 @@ cmd_root() {
   tx_require_root
   echo "$TX_WS_ROOT"
 }
+
+cmd_projects() {
+  tx_require_root
+  tx_projects
+}

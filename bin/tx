@@ -39,7 +39,7 @@ done
 # Dispatch to command module. Some commands share a module file.
 MODULE="$COMMAND"
 case "$COMMAND" in
-  root) MODULE="init" ;;
+  root|projects) MODULE="init" ;;
 esac
 
 COMMAND_FILE="$TX_ROOT/lib/${MODULE}.sh"
