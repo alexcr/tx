@@ -375,7 +375,7 @@ _tx_target_from_pwd() {
     return 0
   fi
 
-  rel="${here#$TX_WS_ROOT/}"
+  rel="${here#"$TX_WS_ROOT"/}"
   first="${rel%%/*}"
 
   if [ "$first" = ".worktrees" ]; then
@@ -408,7 +408,7 @@ tx_target() {
 
 # Display form: "frontend/wt1" or "frontend".
 tx_target_id() {
-  if [ -n "$2" ]; then echo "$1/$2"; else echo "$1"; fi
+  if [ -n "$2" ]; then printf '%s/%s\n' "$1" "$2"; else printf '%s\n' "$1"; fi
 }
 
 # Die unless the resolved target names a project.
