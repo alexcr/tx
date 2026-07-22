@@ -17,6 +17,9 @@ cmd_status() {
   local project
   for project in $(tx_projects); do
     if [ -n "$only" ] && [ "$only" != "$project" ]; then continue; fi
+    # In the full (unscoped) view, skip projects with no worktrees to cut noise.
+    # A scoped `tx status <project>` still shows the named project when empty.
+    if [ -z "$only" ] && [ -z "$(tx_worktrees "$project")" ]; then continue; fi
     _status_project "$project"
     echo ""
   done
@@ -55,21 +58,17 @@ _status_project() {
   done
 }
 
+# Shown only when the db is actually running; omitted entirely otherwise
+# (no pid file, or a stale/dead pid).
 _status_db() {
-  echo "=== DB ==="
   local pid_file="$TX_RUN_DIR/db.pid"
-  if [ ! -f "$pid_file" ]; then
-    echo "  Not running."
-    return 0
-  fi
+  [ -f "$pid_file" ] || return 0
   local pid
   pid=$(cat "$pid_file")
-  if tx_is_alive "$pid"; then
-    tx_load_config ""
-    echo "  Running (PID $pid) — $TX_DB_CMD"
-  else
-    echo "  Not running (stale PID)."
-  fi
+  tx_is_alive "$pid" || return 0
+  tx_load_config ""
+  echo "=== DB ==="
+  echo "  Running (PID $pid) — $TX_DB_CMD"
 }
 
 # Server state whose directory is no longer a live worktree or project.
