@@ -1,298 +1,162 @@
 # lib/wt.sh — tx wt command
 
-# Source serv.sh for inter-tool server stop on remove
 . "$TX_ROOT/lib/serv.sh"
 
 cmd_wt() {
+  tx_require_root
+
   local subcommand="list"
-  local args=""
-
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      add|remove|clean|list) subcommand="$1"; shift ;;
-      *)                args="$args $1"; shift ;;
-    esac
-  done
-
-  set -- $args
+  case "${1:-}" in
+    add|remove|list) subcommand="$1"; shift ;;
+  esac
 
   case "$subcommand" in
     add)    _wt_add "$@" ;;
     remove) _wt_remove "$@" ;;
-    list)   _wt_list ;;
-    clean)  _wt_clean ;;
+    list)   _wt_list "$@" ;;
   esac
 }
 
-_wt_add() {
-  local name=""
-  local branch=""
-  local flag_install=0
+# --- add ---
 
-  # Parse flags
+_wt_add() {
+  local target="" branch="" flag_install=0
+
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name=*|-n=*)  name="${1#*=}"; shift ;;
-      --name|-n)      name="$2"; shift 2 ;;
       --branch=*|-b=*) branch="${1#*=}"; shift ;;
-      --branch|-b)    branch="$2"; shift 2 ;;
-      --install|-i)   flag_install=1; shift ;;
-      *)              shift ;;
+      --branch|-b)     branch="$2"; shift 2 ;;
+      --install|-i)    flag_install=1; shift ;;
+      -*)              tx_die "unknown flag '$1' for tx wt add." ;;
+      *)               [ -z "$target" ] && target="$1"; shift ;;
     esac
   done
 
-  # Auto-assign name if not given: use branch (slashes → dashes) or tx1, tx2...
-  if [ -z "$name" ]; then
-    if [ -n "$branch" ]; then
-      name=$(echo "$branch" | tr '/' '-')
-    else
-      local num=1
-      while [ -d "${TX_WORKTREES_DIR}/tx${num}" ]; do
-        num=$((num + 1))
-      done
-      name="tx${num}"
-    fi
+  # A bare word from inside a project is a worktree name, not a project name.
+  if [ -n "$target" ]; then
+    case "$target" in
+      */*) ;;
+      *)
+        tx_target ""
+        if [ -n "$TX_T_PROJECT" ] && ! tx_is_repo "$TX_WS_ROOT/$target" 2>/dev/null; then
+          target="$TX_T_PROJECT/$target"
+        fi
+        ;;
+    esac
   fi
 
-  local worktree_path="${TX_WORKTREES_DIR}/${name}"
+  tx_target "$target"
+  tx_require_project "wt add"
+  [ -n "$TX_T_WORKTREE" ] || tx_die \
+    "tx wt add needs a worktree name." \
+    "e.g. tx wt add ${TX_T_PROJECT:-frontend}/my_worktree_1"
 
-  # Reuse if exists
-  if [ -d "$worktree_path" ]; then
-    local abs_path
-    abs_path="$(cd "$worktree_path" && pwd)"
-    if [ "$flag_install" -eq 1 ]; then
-      echo "Installing dependencies in ${name}..." >&2
-      (cd "$abs_path" && eval "$TX_INSTALL_CMD") >&2
-    fi
-    echo "$abs_path"
-    return 0
+  tx_load_config "$TX_T_PROJECT"
+
+  local project="$TX_T_PROJECT" name="$TX_T_WORKTREE" dir="$TX_T_DIR"
+  local repo="$TX_WS_ROOT/$project"
+  local id
+  id=$(tx_target_id "$project" "$name")
+
+  [ -d "$dir" ] && tx_die "$id already exists at $(tx_tilde "$dir")."
+
+  [ -n "$branch" ] || branch="$name"
+
+  local branch_exists=0
+  git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null && branch_exists=1
+
+  # Pre-flight runs for any path that does not check out an existing local
+  # branch — i.e. forking a new branch off the default, or tracking an
+  # existing remote branch. Checking out a branch we already have skips it.
+  if [ "$branch_exists" -eq 0 ]; then
+    _wt_preflight "$repo"
   fi
 
-  # Ensure worktrees directory exists
-  mkdir -p "$TX_WORKTREES_DIR"
+  mkdir -p "$(dirname "$dir")"
 
-  # Create worktree
-  if [ -n "$branch" ]; then
-    if git show-ref --verify --quiet "refs/heads/${branch}" 2>/dev/null; then
-      # Existing local branch
-      git worktree add "$worktree_path" "$branch"
-    elif git show-ref --verify --quiet "refs/remotes/origin/${branch}" 2>/dev/null; then
-      # Existing remote branch — check it out locally
-      git worktree add --track -b "$branch" "$worktree_path" "origin/${branch}"
-    else
-      # New branch from default
-      git worktree add -b "$branch" "$worktree_path" "$TX_DEFAULT_BRANCH"
-    fi
+  if [ "$branch_exists" -eq 1 ]; then
+    git -C "$repo" worktree add "$dir" "$branch" >/dev/null \
+      || tx_die "git worktree add failed for $id."
+  elif git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null; then
+    git -C "$repo" worktree add --track -b "$branch" "$dir" "origin/$branch" >/dev/null \
+      || tx_die "git worktree add failed for $id."
   else
-    # Detached HEAD from default branch
-    git worktree add --detach "$worktree_path" "$TX_DEFAULT_BRANCH"
+    git -C "$repo" worktree add -b "$branch" "$dir" "$TX_DEFAULT_BRANCH" >/dev/null \
+      || tx_die "git worktree add failed for $id."
   fi
 
-  # Copy configured files
-  _wt_copy_files "$worktree_path"
+  _wt_copy_files "$repo" "$dir"
+  _wt_link_claude_config "$repo" "$dir"
 
-  # Symlink .claude/ so worktrees inherit permissions and settings
-  _wt_link_claude_config "$worktree_path"
-
-  # Symlink node_modules from repo root if it exists
-  _wt_link_node_modules "$worktree_path"
-
-  # Run install command if requested
   if [ "$flag_install" -eq 1 ]; then
-    local abs_wt
-    abs_wt="$(cd "$worktree_path" && pwd)"
-    echo "Installing dependencies in ${name}..." >&2
-    (cd "$abs_wt" && eval "$TX_INSTALL_CMD") >&2
+    echo "Installing dependencies in $id..."
+    (cd "$dir" && eval "$TX_INSTALL_CMD") || tx_die "install failed in $id."
   fi
 
-  local abs_path
-  abs_path="$(cd "$worktree_path" && pwd)"
-  echo "$abs_path"
+  echo "Created $id on branch $branch"
+  echo "  $(tx_tilde "$dir")"
+}
+
+# Working tree must be clean, and up to date with origin when there is one.
+_wt_preflight() {
+  local repo="$1"
+
+  # Only tracked changes count. Untracked files (e.g. a local .env that TX_COPY
+  # is meant to propagate) must not block worktree creation from a clean tree.
+  if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    tx_die "$(tx_tilde "$repo") is dirty; cannot create a worktree from it." \
+      "Commit, stash, or discard first."
+  fi
+
+  git -C "$repo" remote get-url origin >/dev/null 2>&1 || return 0
+  git -C "$repo" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 || return 0
+
+  git -C "$repo" pull --ff-only --quiet 2>/dev/null || tx_die \
+    "cannot fast-forward $(tx_tilde "$repo")." \
+    "Resolve manually: cd $(tx_tilde "$repo") && git pull"
 }
 
 _wt_copy_files() {
-  local target_dir="$1"
-  local repo_root
-  repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+  local repo="$1" dir="$2"
+  [ -n "$TX_COPY" ] || return 0
 
-  if [ -z "$TX_COPY" ]; then
-    return
-  fi
-
-  # Support both comma and space separated lists
-  local patterns
-  patterns=$(echo "$TX_COPY" | tr ',' '\n' | tr ' ' '\n')
-
-  echo "$patterns" | while read -r pattern; do
-    # Trim whitespace
-    pattern=$(echo "$pattern" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [ -z "$pattern" ] && continue
-
-    # Expand glob from repo root
-    cd "$repo_root" || continue
-    for src in $pattern; do
-      [ -e "$src" ] || continue
-
-      local src_dir
-      src_dir=$(dirname "$src")
-      if [ "$src_dir" != "." ]; then
-        mkdir -p "${target_dir}/${src_dir}"
-      fi
-
-      if [ -d "$src" ]; then
-        cp -R "$src" "${target_dir}/${src_dir}/"
-        echo "  Copied $src/"
-      else
-        cp "$src" "${target_dir}/${src}"
+  local pattern src src_dir
+  # Split the configured list into patterns with globbing OFF: pathname
+  # expansion here would match the caller's CWD, not the repo. The patterns are
+  # re-globbed inside the subshell below, after cd "$repo", where they belong.
+  set -f
+  for pattern in $(echo "$TX_COPY" | tr ',' ' '); do
+    [ -n "$pattern" ] || continue
+    ( set +f; cd "$repo" || exit 0
+      for src in $pattern; do
+        [ -e "$src" ] || continue
+        src_dir=$(dirname "$src")
+        [ "$src_dir" != "." ] && mkdir -p "$dir/$src_dir"
+        if [ -d "$src" ]; then
+          cp -R "$src" "$dir/$src_dir/"
+        else
+          cp "$src" "$dir/$src"
+        fi
         echo "  Copied $src"
-      fi
-    done
-    cd "$repo_root" || true
+      done
+    )
   done
-}
-
-_wt_link_claude_config() {
-  local target_dir="$1"
-  local repo_root
-  repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
-
-  [ -d "$repo_root/.claude" ] || return 0
-  [ -e "$target_dir/.claude" ] && return 0
-
-  ln -s "$repo_root/.claude" "$target_dir/.claude"
-}
-
-_wt_link_node_modules() {
-  # No-op: node_modules is not copied or symlinked into worktrees.
-  # Symlinks break yarn v1 (can't resolve nested deps through them),
-  # and copying is too slow for large node_modules directories.
-  # The worktree has yarn.lock, so `yarn install` will use the local cache.
+  set +f
   return 0
 }
 
+# Worktrees inherit the project's Claude settings.
+_wt_link_claude_config() {
+  local repo="$1" dir="$2"
+  [ -d "$repo/.claude" ] || return 0
+  [ -e "$dir/.claude" ] && return 0
+  ln -s "$repo/.claude" "$dir/.claude"
+}
+
 _wt_list() {
-  local found=0
-  for dir in "${TX_WORKTREES_DIR}"/*/; do
-    [ -d "$dir" ] || continue
-    found=1
-    local wname
-    wname=$(basename "$dir")
-    local abs_path
-    abs_path="$(cd "$dir" && pwd)"
-
-    local parts=""
-
-    # Check for server
-    local whash
-    whash=$(tx_hash_dir "$abs_path")
-    if [ -f "/tmp/tx-serv/${whash}.pid" ]; then
-      local wpid
-      wpid=$(cat "/tmp/tx-serv/${whash}.pid")
-      local wport
-      wport=$(cat "/tmp/tx-serv/${whash}.port" 2>/dev/null || echo "?")
-      if tx_is_alive "$wpid"; then
-        parts="server on port $wport"
-      else
-        parts="server dead (port $wport)"
-      fi
-    fi
-
-    # Check for tmux session
-    if tmux has-session -t "$wname" 2>/dev/null; then
-      [ -n "$parts" ] && parts="$parts, "
-      parts="${parts}tmux active"
-    fi
-
-    if [ -n "$parts" ]; then
-      echo "  ${wname}  [$parts]"
-    else
-      echo "  ${wname}"
-    fi
-  done
-  if [ "$found" -eq 0 ]; then
-    echo "No worktrees."
-  fi
+  tx_die "not implemented"
 }
 
 _wt_remove() {
-  local name=""
-
-  # Parse flags
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --name=*|-n=*) name="${1#*=}"; shift ;;
-      --name|-n)     name="$2"; shift 2 ;;
-      *)             [ -z "$name" ] && name="$1"; shift ;;
-    esac
-  done
-
-  # If no name given, try to detect from current directory
-  if [ -z "$name" ]; then
-    name=$(tx_detect_worktree_name)
-    if [ -z "$name" ]; then
-      echo "Not inside a tx worktree. Specify one with --name/-n."
-      return 1
-    fi
-  fi
-
-  local worktree_path="${TX_WORKTREES_DIR}/${name}"
-
-  if [ ! -d "$worktree_path" ]; then
-    echo "Worktree ${name} does not exist."
-    return 1
-  fi
-
-  local abs_path
-  abs_path="$(cd "$worktree_path" && pwd)"
-
-  # Inter-tool: stop any running server for this worktree
-  tx_ensure_serv_dir
-  _serv_stop_dir "$abs_path" 2>/dev/null && echo "Stopped server for ${name}."
-
-  # Kill tmux session if exists
-  tmux kill-session -t "$name" 2>/dev/null || true
-
-  # Remove worktree
-  echo "Removing worktree ${name}..."
-  git worktree remove "$worktree_path" --force 2>/dev/null
-
-  # Delete auto-created branch (only if it matches the naming pattern)
-  local auto_branch="worktree-${name}"
-  if git show-ref --verify --quiet "refs/heads/${auto_branch}" 2>/dev/null; then
-    git branch -D "$auto_branch" 2>/dev/null
-  fi
-
-  echo "Removed ${name}."
-}
-
-_wt_clean() {
-  local confirm="${1:-}"
-
-  # Check if there's anything to clean
-  local has_worktrees=0
-  for dir in "${TX_WORKTREES_DIR}"/*/; do
-    [ -d "$dir" ] && has_worktrees=1 && break
-  done
-  if [ "$has_worktrees" -eq 0 ]; then
-    echo "No worktrees found."
-    return 0
-  fi
-
-  # Skip confirmation if called with --yes (e.g. from nuke)
-  if [ "$confirm" != "--yes" ]; then
-    printf "Remove all worktrees? [y/N] "
-    read -r answer
-    case "$answer" in
-      y|Y|yes|YES) ;;
-      *) echo "Aborted."; return 0 ;;
-    esac
-  fi
-
-  for dir in "${TX_WORKTREES_DIR}"/*/; do
-    [ -d "$dir" ] || continue
-    local wname
-    wname=$(basename "$dir")
-    _wt_remove --name "$wname"
-  done
-  echo "All worktrees removed."
+  tx_die "not implemented"
 }
