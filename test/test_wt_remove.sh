@@ -90,5 +90,20 @@ out=$(tx_in "$WS" wt remove frontend/ghost -y); TX_STATUS=$?
 assert_fails "$TX_STATUS"
 assert_contains "$out" "no worktree"
 
+# Task 10: the wt <-> serv seam — removing a worktree with a live server must
+# stop it and clear its state. Needs a real bound port, so gate on python3.
+if command -v python3 >/dev/null 2>&1; then
+  it "stops the worktree's server when removing it"
+  printf 'TX_PORT_START="9900"\nTX_START_CMD="python3 -m http.server \$PORT"\nTX_SERV_TIMEOUT="15"\n' \
+    > "$WS/.tx/config"
+  tx_in "$WS" wt add frontend/served >/dev/null
+  tx_in "$WS" serv start frontend/served >/dev/null
+  out=$(tx_in "$WS" wt remove frontend/served -y -f)
+  assert_contains "$out" "Stopped server"
+
+  it "leaves no server state behind"
+  assert_eq "$(ls "$WS/.tx/run/serv"/*.pid 2>/dev/null | wc -l | tr -d ' ')" "0"
+fi
+
 cleanup_workspace "$WS"
 finish
