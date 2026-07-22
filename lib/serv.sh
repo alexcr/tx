@@ -1,21 +1,42 @@
 # lib/serv.sh — tx serv command
+#
+# State lives at <root>/.tx/run/serv/<md5-of-dir>.{pid,port,dir,log}.
+# The .dir file lets list/status map a hash back to <project>/<worktree>.
 
-# Internal: get hash for a directory (defaults to $PWD)
-_serv_hash() {
-  tx_hash_dir "${1:-$PWD}"
+_serv_dir() {
+  echo "$TX_RUN_DIR/serv"
 }
 
-# Internal: get state file path
+_serv_ensure_dir() {
+  mkdir -p "$(_serv_dir)"
+}
+
 _serv_file() {
-  local hash="$1"
-  local ext="$2"
-  echo "/tmp/tx-serv/${hash}.${ext}"
+  echo "$(_serv_dir)/$1.$2"
 }
 
-# Internal: kill a process and all its descendants recursively
+_serv_hash() {
+  tx_hash_dir "$1"
+}
+
+# Map an absolute directory back to its canonical id for display.
+_serv_id_for_dir() {
+  local dir="$1"
+  case "$dir" in
+    "$TX_WT_DIR"/*)
+      local rel="${dir#"$TX_WT_DIR"/}"
+      echo "${rel%%/*}/${rel#*/}"
+      ;;
+    "$TX_WS_ROOT"/*)
+      local rel="${dir#"$TX_WS_ROOT"/}"
+      echo "${rel%%/*}"
+      ;;
+    *) tx_tilde "$dir" ;;
+  esac
+}
+
 _serv_kill_tree() {
-  local parent="$1"
-  local children
+  local parent="$1" child children
   children=$(pgrep -P "$parent" 2>/dev/null) || true
   for child in $children; do
     _serv_kill_tree "$child"
@@ -23,338 +44,260 @@ _serv_kill_tree() {
   kill "$parent" 2>/dev/null || true
 }
 
-# Internal: stop server by directory path. Called by wt.sh and code.sh too.
+# Stop the server registered for a directory. Returns 1 if there was none.
 _serv_stop_dir() {
   local dir="$1"
   local hash
   hash=$(_serv_hash "$dir")
   local pid_file
-  pid_file=$(_serv_file "$hash" "pid")
-
-  if [ ! -f "$pid_file" ]; then
-    return 1
-  fi
+  pid_file=$(_serv_file "$hash" pid)
+  [ -f "$pid_file" ] || return 1
 
   local pid
   pid=$(cat "$pid_file")
-  if tx_is_alive "$pid"; then
-    _serv_kill_tree "$pid"
-  fi
+  tx_is_alive "$pid" && _serv_kill_tree "$pid"
 
-  # Also kill any process still on the port
-  local port_file
-  port_file=$(_serv_file "$hash" "port")
+  local port_file port p
+  port_file=$(_serv_file "$hash" port)
   if [ -f "$port_file" ]; then
-    local port
     port=$(cat "$port_file")
-    local port_pids
-    port_pids=$(lsof -ti :"$port" 2>/dev/null) || true
-    for p in $port_pids; do
+    for p in $(lsof -ti :"$port" 2>/dev/null); do
       kill "$p" 2>/dev/null || true
     done
   fi
 
-  rm -f "$(_serv_file "$hash" pid)"
-  rm -f "$(_serv_file "$hash" port)"
-  rm -f "$(_serv_file "$hash" dir)"
-  rm -f "$(_serv_file "$hash" log)"
+  rm -f "$(_serv_file "$hash" pid)" "$(_serv_file "$hash" port)" \
+        "$(_serv_file "$hash" dir)" "$(_serv_file "$hash" log)" \
+        "$(_serv_file "$hash" url)"
   return 0
 }
 
 cmd_serv() {
-  tx_ensure_serv_dir
+  tx_require_root
+  _serv_ensure_dir
 
-  # Parse flags, preserving positional args in order
-  local flag_open=0
-  local flag_front=0
-  local flag_port=""
+  local subcommand="list"
+  case "${1:-}" in
+    start|stop|restart|open|list|log) subcommand="$1"; shift ;;
+  esac
 
-  # Collect non-flag args into numbered variables
-  local count=0
-
+  local flag_open=0 flag_front=0 flag_port="" target="" custom_cmd=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --open|-o)  flag_open=1; shift ;;
       --front|-f) flag_front=1; shift ;;
       --port=*)   flag_port="${1#*=}"; shift ;;
       --port|-p)  flag_port="$2"; shift 2 ;;
+      -*)         tx_die "unknown flag '$1' for tx serv." ;;
       *)
-        count=$((count + 1))
-        eval "_arg${count}=\$1"
+        if [ -z "$target" ]; then target="$1"; else custom_cmd="$1"; fi
         shift
         ;;
     esac
   done
 
-  # Reconstruct positional args (preserving quoting)
-  local subcommand="list"
-  local custom_cmd=""
+  case "$subcommand" in
+    list) _serv_list; return $? ;;
+    stop) if [ "$target" = "all" ]; then _serv_stop_all; return $?; fi ;;
+  esac
 
-  if [ "$count" -ge 1 ]; then
-    eval "subcommand=\$_arg1"
-  fi
-  if [ "$count" -ge 2 ]; then
-    eval "custom_cmd=\$_arg2"
-  fi
+  tx_target "$target"
+  tx_require_project "serv $subcommand"
+  tx_load_config "$TX_T_PROJECT"
+
+  local id
+  id=$(tx_target_id "$TX_T_PROJECT" "$TX_T_WORKTREE")
+  [ -d "$TX_T_DIR" ] || tx_die "$id does not exist at $(tx_tilde "$TX_T_DIR")."
 
   case "$subcommand" in
-    start)   _serv_start "$flag_open" "$flag_front" "$flag_port" "$custom_cmd" ;;
-    stop)
-      local stop_target=""
-      [ -n "$custom_cmd" ] && stop_target="$custom_cmd"
-      _serv_stop "$stop_target"
-      ;;
-    restart) _serv_restart "$flag_open" "$flag_front" ;;
-    open)    _serv_open ;;
-    list)    _serv_list ;;
-    log)     _serv_log ;;
-    *)
-      echo "tx serv: unknown subcommand '$subcommand'"
-      echo "Usage: tx serv [start|stop|restart|open|list|log]"
-      return 1
-      ;;
+    start)   _serv_start "$TX_T_DIR" "$id" "$flag_open" "$flag_front" "$flag_port" "$custom_cmd" ;;
+    stop)    _serv_stop "$TX_T_DIR" "$id" ;;
+    restart) _serv_restart "$TX_T_DIR" "$id" "$flag_open" "$flag_front" ;;
+    open)    _serv_open "$TX_T_DIR" "$id" ;;
+    log)     _serv_log "$TX_T_DIR" "$id" ;;
   esac
 }
 
 _serv_start() {
-  local flag_open="$1"
-  local flag_front="$2"
-  local flag_port="$3"
-  local custom_cmd="$4"
+  local dir="$1" id="$2" flag_open="$3" flag_front="$4" flag_port="$5" custom_cmd="$6"
+  local hash pid_file
+  hash=$(_serv_hash "$dir")
+  pid_file=$(_serv_file "$hash" pid)
 
-  local hash
-  hash=$(_serv_hash)
-  local pid_file
-  pid_file=$(_serv_file "$hash" "pid")
-
-  # Check if already running
   if [ -f "$pid_file" ]; then
     local existing_pid
     existing_pid=$(cat "$pid_file")
     if tx_is_alive "$existing_pid"; then
       local existing_port
       existing_port=$(cat "$(_serv_file "$hash" port)")
-      echo "Server already running for this directory (PID $existing_pid, port $existing_port)"
-      echo "$(tx_build_url "$existing_port")"
+      echo "Server already running for $id (PID $existing_pid, port $existing_port)"
+      tx_build_url "$existing_port"
       return 0
-    else
-      # Stale PID file, clean up
-      _serv_stop_dir "$PWD"
     fi
+    _serv_stop_dir "$dir"
   fi
 
-  # Determine port
   local port
   if [ -n "$flag_port" ]; then
-    if lsof -ti :"$flag_port" > /dev/null 2>&1; then
-      echo "Port $flag_port is already in use."
-      return 1
-    fi
+    lsof -ti :"$flag_port" >/dev/null 2>&1 && tx_die "port $flag_port is already in use."
     port="$flag_port"
   else
     port=$(tx_find_port)
   fi
 
-  # Determine command
-  local cmd
-  if [ -n "$custom_cmd" ]; then
-    cmd="$custom_cmd"
-  else
-    cmd="$TX_START_CMD"
-  fi
+  local cmd="${custom_cmd:-$TX_START_CMD}"
 
-  # Warn if npm/yarn will walk up to a parent package.json
-  if [ ! -f "package.json" ]; then
+  if [ ! -f "$dir/package.json" ]; then
     case "$cmd" in
       npm*|yarn*|npx*)
-        echo "Warning: No package.json in $PWD" >&2
+        echo "Warning: no package.json in $(tx_tilde "$dir")" >&2
         echo "  $cmd will use a parent directory's package.json instead." >&2
-        echo "  The server may start from the wrong directory." >&2
         ;;
     esac
   fi
 
-  # Write state files
-  echo "$port" > "$(_serv_file "$hash" port)"
-  echo "$PWD" > "$(_serv_file "$hash" dir)"
+  local log_file url timeout
+  log_file=$(_serv_file "$hash" log)
+  url=$(tx_build_url "$port")
+  timeout="${TX_SERV_TIMEOUT:-120}"
 
-  local log_file
-  log_file=$(_serv_file "$hash" "log")
+  echo "$port" > "$(_serv_file "$hash" port)"
+  echo "$dir" > "$(_serv_file "$hash" dir)"
+  printf '%s\n' "$url" > "$(_serv_file "$hash" url)"
 
   if [ "$flag_front" -eq 1 ]; then
-    # Foreground mode
-    echo "Starting dev server on port $port (foreground)..."
-    echo "$(tx_build_url "$port")"
-
-    if [ "$flag_open" -eq 1 ] || [ "$TX_AUTO_OPEN" = "true" ]; then
-      tx_open_browser "$(tx_build_url "$port")"
-    fi
-
-    # Run in foreground, clean up on exit
-    trap "_serv_stop_dir '$PWD'" EXIT INT TERM
+    echo "Starting $id on port $port (foreground)..."
+    echo "$url"
+    if [ "$flag_open" -eq 1 ] || [ "$TX_AUTO_OPEN" = "true" ]; then tx_open_browser "$url"; fi
+    trap "_serv_stop_dir '$dir'" EXIT INT TERM
+    cd "$dir" || tx_die "cannot enter $dir"
     export PORT="$port"
     eval "$cmd"
-  else
-    # Background mode
-    export PORT="$port"
-    eval "$cmd" > "$log_file" 2>&1 &
-    local server_pid=$!
-    echo "$server_pid" > "$pid_file"
-
-    # Wait for server to be ready
-    echo "Starting dev server on port $port..."
-    local timeout=120
-    local elapsed=0
-
-    # Phase 1: wait for port to be bound
-    while ! lsof -ti :"$port" > /dev/null 2>&1; do
-      sleep 1
-      elapsed=$((elapsed + 1))
-      if [ "$elapsed" -ge "$timeout" ]; then
-        echo "Timed out waiting for server on port $port."
-        _serv_stop_dir "$PWD"
-        return 1
-      fi
-      if ! tx_is_alive "$server_pid"; then
-        echo "Server process exited unexpectedly. Check log:"
-        echo "  tx serv log"
-        return 1
-      fi
-    done
-
-    # Phase 2: wait for server to respond to HTTP requests
-    local url
-    url=$(tx_build_url "$port")
-    while ! curl -skf -o /dev/null "$url" 2>/dev/null; do
-      sleep 1
-      elapsed=$((elapsed + 1))
-      if [ "$elapsed" -ge "$timeout" ]; then
-        echo "Server bound to port $port but not responding to requests."
-        echo "It may still be building. Check log:"
-        echo "  tx serv log"
-        break
-      fi
-      if ! tx_is_alive "$server_pid"; then
-        echo "Server process exited unexpectedly. Check log:"
-        echo "  tx serv log"
-        return 1
-      fi
-    done
-
-    echo "Server ready (PID $server_pid)"
-    echo "$(tx_build_url "$port")"
-
-    if [ "$flag_open" -eq 1 ] || [ "$TX_AUTO_OPEN" = "true" ]; then
-      tx_open_browser "$(tx_build_url "$port")"
-    fi
+    return $?
   fi
+
+  ( cd "$dir" && PORT="$port" eval "$cmd" ) > "$log_file" 2>&1 &
+  local server_pid=$!
+  echo "$server_pid" > "$pid_file"
+
+  echo "Starting $id on port $port..."
+  local elapsed=0
+
+  while ! lsof -ti :"$port" >/dev/null 2>&1; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if [ "$elapsed" -ge "$timeout" ]; then
+      echo "Timed out waiting for $id on port $port." >&2
+      _serv_stop_dir "$dir"
+      return 1
+    fi
+    if ! tx_is_alive "$server_pid"; then
+      echo "Server process exited. Check: tx serv log $id" >&2
+      return 1
+    fi
+  done
+
+  while ! curl -skf -o /dev/null "$url" 2>/dev/null; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if [ "$elapsed" -ge "$timeout" ]; then
+      echo "$id bound port $port but is not responding yet."
+      echo "It may still be building. Check: tx serv log $id"
+      break
+    fi
+    if ! tx_is_alive "$server_pid"; then
+      echo "Server process exited. Check: tx serv log $id" >&2
+      return 1
+    fi
+  done
+
+  echo "Server ready (PID $server_pid)"
+  echo "$url"
+  if [ "$flag_open" -eq 1 ] || [ "$TX_AUTO_OPEN" = "true" ]; then tx_open_browser "$url"; fi
+  return 0
 }
 
 _serv_stop() {
-  local target="${1:-}"
-
-  if [ "$target" = "all" ]; then
-    local found=0
-    for pid_file in /tmp/tx-serv/*.pid; do
-      [ -f "$pid_file" ] || continue
-      found=1
-      local hash
-      hash=$(basename "$pid_file" .pid)
-      local dir_file="/tmp/tx-serv/${hash}.dir"
-      local dir="unknown"
-      [ -f "$dir_file" ] && dir=$(cat "$dir_file")
-
-      _serv_stop_dir "$dir"
-      echo "Stopped server for $dir"
-    done
-    if [ "$found" -eq 0 ]; then
-      echo "No running servers."
-    fi
-    return 0
-  fi
-
-  if _serv_stop_dir "$PWD"; then
-    echo "Server stopped."
+  local dir="$1" id="$2"
+  if _serv_stop_dir "$dir"; then
+    echo "Stopped $id."
   else
-    echo "No server running for this directory."
+    echo "No server running for $id."
   fi
+}
+
+_serv_stop_all() {
+  local found=0 pid_file hash dir_file dir
+  for pid_file in "$(_serv_dir)"/*.pid; do
+    [ -f "$pid_file" ] || continue
+    found=1
+    hash=$(basename "$pid_file" .pid)
+    dir_file=$(_serv_file "$hash" dir)
+    dir=""
+    [ -f "$dir_file" ] && dir=$(cat "$dir_file")
+    if [ -n "$dir" ]; then
+      _serv_stop_dir "$dir"
+      echo "Stopped $(_serv_id_for_dir "$dir")."
+    else
+      rm -f "$(_serv_dir)/$hash".*
+    fi
+  done
+  [ "$found" -eq 0 ] && echo "No running servers."
+  return 0
 }
 
 _serv_restart() {
-  local flag_open="$1"
-  local flag_front="$2"
-  local hash
-  hash=$(_serv_hash)
-  local port_file
-  port_file=$(_serv_file "$hash" "port")
+  local dir="$1" id="$2" flag_open="$3" flag_front="$4"
+  local hash port_file saved_port=""
+  hash=$(_serv_hash "$dir")
+  port_file=$(_serv_file "$hash" port)
+  [ -f "$port_file" ] && saved_port=$(cat "$port_file")
 
-  if [ ! -f "$port_file" ]; then
-    echo "No server running for this directory."
-    return 1
-  fi
-
-  local saved_port
-  saved_port=$(cat "$port_file")
-
-  _serv_stop_dir "$PWD"
+  _serv_stop_dir "$dir" || true
   sleep 1
-
-  _serv_start "$flag_open" "$flag_front" "$saved_port"
+  _serv_start "$dir" "$id" "$flag_open" "$flag_front" "$saved_port" ""
 }
 
 _serv_open() {
-  local hash
-  hash=$(_serv_hash)
-  local port_file
-  port_file=$(_serv_file "$hash" "port")
-
-  if [ ! -f "$port_file" ]; then
-    echo "No server running for this directory. Run 'tx serv start' first."
-    return 1
-  fi
-
-  local port
-  port=$(cat "$port_file")
+  local dir="$1" id="$2"
+  local hash port_file
+  hash=$(_serv_hash "$dir")
+  port_file=$(_serv_file "$hash" port)
+  [ -f "$port_file" ] || tx_die "no server running for $id." "Start it with: tx serv start $id"
   local url
-  url=$(tx_build_url "$port")
+  url=$(tx_build_url "$(cat "$port_file")")
   echo "Opening $url..."
   tx_open_browser "$url"
 }
 
-_serv_list() {
-  local found=0
-  for pid_file in /tmp/tx-serv/*.pid; do
-    [ -f "$pid_file" ] || continue
-    found=1
-    local hash
-    hash=$(basename "$pid_file" .pid)
-    local dir="unknown"
-    local port="?"
-    local pid
-    pid=$(cat "$pid_file")
-    local status="dead"
-
-    [ -f "/tmp/tx-serv/${hash}.dir" ] && dir=$(cat "/tmp/tx-serv/${hash}.dir")
-    [ -f "/tmp/tx-serv/${hash}.port" ] && port=$(cat "/tmp/tx-serv/${hash}.port")
-    tx_is_alive "$pid" && status="running"
-
-    printf "  %-8s port %-6s PID %-8s %s\n" "[$status]" "$port" "$pid" "$dir"
-  done
-  if [ "$found" -eq 0 ]; then
-    echo "No servers managed by tx."
-  fi
+_serv_log() {
+  local dir="$1" id="$2"
+  local hash log_file
+  hash=$(_serv_hash "$dir")
+  log_file=$(_serv_file "$hash" log)
+  [ -f "$log_file" ] || tx_die "no log for $id." "Is a server running?"
+  cat "$log_file"
 }
 
-_serv_log() {
-  local hash
-  hash=$(_serv_hash)
-  local log_file
-  log_file=$(_serv_file "$hash" "log")
-
-  if [ ! -f "$log_file" ]; then
-    echo "No log file for this directory. Is a server running?"
-    return 1
+_serv_list() {
+  local out
+  out=$(
+    for pid_file in "$(_serv_dir)"/*.pid; do
+      [ -f "$pid_file" ] || continue
+      hash=$(basename "$pid_file" .pid)
+      pid=$(cat "$pid_file")
+      dir=""; port="?"; state="dead"; url=""
+      [ -f "$(_serv_file "$hash" dir)" ] && dir=$(cat "$(_serv_file "$hash" dir)")
+      [ -f "$(_serv_file "$hash" port)" ] && port=$(cat "$(_serv_file "$hash" port)")
+      [ -f "$(_serv_file "$hash" url)" ] && url=$(cat "$(_serv_file "$hash" url)")
+      tx_is_alive "$pid" && state="running"
+      printf '%-28s %-6s PID %-8s %-8s %s\n' \
+        "$(_serv_id_for_dir "$dir")" "$port" "$pid" "$state" "$url"
+    done | sort
+  )
+  if [ -z "$out" ]; then
+    echo "No servers managed by tx."
+  else
+    printf '%s\n' "$out"
   fi
-
-  cat "$log_file"
 }
