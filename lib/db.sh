@@ -1,10 +1,20 @@
 # lib/db.sh — tx db command
-
-TX_DB_PID_FILE="/tmp/tx-db.pid"
-TX_DB_LOG_FILE="/tmp/tx-db.log"
-TX_DB_CONFIG="${HOME}/.tx-databases"
+#
+# State lives under the workspace .tx directory:
+#   <root>/.tx/run/db.pid, <root>/.tx/run/db.log   process state
+#   <root>/.tx/databases                           alias config
+# The three paths depend on the resolved root, so they are set in cmd_db (after
+# tx_require_root), not at source time.
 
 cmd_db() {
+  tx_require_root
+  tx_load_config ""
+
+  TX_DB_PID_FILE="$TX_RUN_DIR/db.pid"
+  TX_DB_LOG_FILE="$TX_RUN_DIR/db.log"
+  TX_DB_CONFIG="$TX_TX_DIR/databases"
+  mkdir -p "$TX_RUN_DIR"
+
   local subcommand="${1:-status}"
   shift 2>/dev/null || true
 
@@ -16,8 +26,8 @@ cmd_db() {
     run)    _db_run "$@" ;;
     list)   _db_list ;;
     *)
-      echo "tx db: unknown subcommand '$subcommand'"
-      echo "Usage: tx db [start|stop|status|log|run|list]"
+      echo "tx db: unknown subcommand '$subcommand'" >&2
+      echo "Usage: tx db [start|stop|status|log|run|list]" >&2
       return 1
       ;;
   esac
@@ -25,8 +35,8 @@ cmd_db() {
 
 _db_start() {
   if [ -z "$TX_DB_CMD" ]; then
-    echo "No db command configured."
-    echo "Set one with: tx config db \"<command>\""
+    echo "No db command configured." >&2
+    echo "Set one with: tx config db \"<command>\"" >&2
     return 1
   fi
 
@@ -57,8 +67,12 @@ _db_stop() {
   local pid
   pid=$(cat "$TX_DB_PID_FILE")
   if tx_is_alive "$pid"; then
-    kill "$pid" 2>/dev/null || true
+    # Kill children before the parent: killing the parent first reparents its
+    # children to PID 1 (they escape `pkill -P`), which on macOS /bin/sh leaves
+    # the actual worker (e.g. the sleep in tests) orphaned when `eval "$cmd" &`
+    # forks rather than exec-replaces the subshell.
     pkill -P "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
     echo "Stopped (PID $pid)."
   else
     echo "Not running (stale PID)."
