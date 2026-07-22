@@ -101,6 +101,22 @@ tx_project_path() {
   tx_die "no project '$name'." "Projects: ${known:-(none)}"
 }
 
+# Print "<project>\t<worktree>\t<dir>" for every worktree, sorted.
+tx_worktrees() {
+  local only="${1:-}"
+  local pdir project wdir name
+  for pdir in "$TX_WT_DIR"/*/; do
+    [ -d "$pdir" ] || continue
+    project=$(basename "$pdir")
+    [ -n "$only" ] && [ "$only" != "$project" ] && continue
+    for wdir in "$pdir"*/; do
+      [ -d "$wdir" ] || continue
+      name=$(basename "$wdir")
+      printf '%s\t%s\t%s\n' "$project" "$name" "${wdir%/}"
+    done
+  done | sort
+}
+
 # --- Configuration ---
 #
 # Keys resolve in three layers:

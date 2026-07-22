@@ -154,7 +154,37 @@ _wt_link_claude_config() {
 }
 
 _wt_list() {
-  tx_die "not implemented"
+  local names=0 only=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --names) names=1; shift ;;
+      -*)      tx_die "unknown flag '$1' for tx wt list." ;;
+      *)       only="$1"; shift ;;
+    esac
+  done
+
+  if [ -n "$only" ]; then
+    tx_project_path "$only" >/dev/null || return 1
+  fi
+
+  local list
+  list=$(tx_worktrees "$only")
+
+  if [ -z "$list" ]; then
+    [ "$names" -eq 1 ] && return 0
+    echo "No worktrees."
+    return 0
+  fi
+
+  printf '%s\n' "$list" | while IFS='	' read -r project name dir; do
+    if [ "$names" -eq 1 ]; then
+      echo "$project/$name"
+      continue
+    fi
+    local branch
+    branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+    printf '%-28s %-42s %s\n' "$project/$name" "$(tx_tilde "$dir")" "$branch"
+  done
 }
 
 _wt_remove() {
