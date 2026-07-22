@@ -323,3 +323,97 @@ tx_open_browser() {
 tx_is_alive() {
   kill -0 "$1" 2>/dev/null
 }
+
+# --- Targets ---
+#
+# A target names a project or a worktree:
+#   <project>/<worktree>   a specific worktree
+#   <project>              the project's main checkout
+#   (omitted)              inferred from $PWD
+#
+# tx_resolve_target prints three tab-separated fields:
+#   <project>\t<worktree>\t<absolute directory>
+# Project and worktree may be empty (at the workspace root). Dies on a bad
+# project name or a target with more than one slash.
+
+tx_resolve_target() {
+  local target="${1:-}"
+
+  if [ -z "$target" ]; then
+    _tx_target_from_pwd
+    return $?
+  fi
+
+  local project worktree
+  project="${target%%/*}"
+  case "$target" in
+    */*) worktree="${target#*/}" ;;
+    *)   worktree="" ;;
+  esac
+
+  case "$worktree" in
+    */*) tx_die "bad target '$target'." \
+           "Use <project>/<worktree>; worktree names cannot contain '/'." ;;
+  esac
+
+  local path
+  path=$(tx_project_path "$project") || return 1
+
+  if [ -n "$worktree" ]; then
+    printf '%s\t%s\t%s\n' "$project" "$worktree" "$TX_WT_DIR/$project/$worktree"
+  else
+    printf '%s\t\t%s\n' "$project" "$path"
+  fi
+}
+
+_tx_target_from_pwd() {
+  local here rel first second
+  here=$(pwd -P)
+
+  if [ "$here" = "$TX_WS_ROOT" ]; then
+    printf '\t\t%s\n' "$TX_WS_ROOT"
+    return 0
+  fi
+
+  rel="${here#$TX_WS_ROOT/}"
+  first="${rel%%/*}"
+
+  if [ "$first" = ".worktrees" ]; then
+    rel="${rel#.worktrees/}"
+    first="${rel%%/*}"
+    case "$rel" in
+      */*) second="${rel#*/}"; second="${second%%/*}" ;;
+      *)   second="" ;;
+    esac
+    if [ -z "$second" ]; then
+      # Inside .worktrees/<project> but not in a worktree.
+      printf '%s\t\t%s\n' "$first" "$TX_WS_ROOT/$first"
+      return 0
+    fi
+    printf '%s\t%s\t%s\n' "$first" "$second" "$TX_WT_DIR/$first/$second"
+    return 0
+  fi
+
+  printf '%s\t\t%s\n' "$first" "$TX_WS_ROOT/$first"
+}
+
+# Convenience wrappers — set TX_T_PROJECT / TX_T_WORKTREE / TX_T_DIR.
+tx_target() {
+  local line
+  line=$(tx_resolve_target "${1:-}") || exit 1
+  TX_T_PROJECT=$(printf '%s' "$line" | cut -f1)
+  TX_T_WORKTREE=$(printf '%s' "$line" | cut -f2)
+  TX_T_DIR=$(printf '%s' "$line" | cut -f3)
+}
+
+# Display form: "frontend/wt1" or "frontend".
+tx_target_id() {
+  if [ -n "$2" ]; then echo "$1/$2"; else echo "$1"; fi
+}
+
+# Die unless the resolved target names a project.
+tx_require_project() {
+  [ -n "$TX_T_PROJECT" ] || tx_die \
+    "run this from a project or worktree, or pass a target." \
+    "e.g. tx $1 frontend/my_worktree_1"
+}
