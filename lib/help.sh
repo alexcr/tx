@@ -1,180 +1,207 @@
 # lib/help.sh — tx help command
 
-_help_config() {
+_help_overview() {
   cat << 'EOF'
-tx config — Manage configuration (user: ~/.txrc, project: .txrc)
+tx — isolated dev environments from one workspace root
 
-Usage:
-  tx config                 Show current configuration
-  tx config <key> <value>   Set a configuration value
-  tx config init            Interactive setup (writes to appropriate file per key)
-  tx config reset [user|project]  Delete config file (with confirmation)
+Usage: tx <command> [subcommand] [target] [flags]
 
-Keys:
-  User (~/.txrc):   code, tunnel, auto_open, db, auto_tmux, auto_start
-  Project (.txrc):  port, start, url, branch, copy, worktrees_dir
+A target is <project>/<worktree>, or <project>, or omitted to infer from
+the current directory.
+
+Commands:
+  init                    Mark the current directory as the workspace root
+  wt                      Manage git worktrees (default: list)
+  serv                    Manage dev servers (default: list)
+  db                      Manage the database process and aliases
+  config                  Show or set configuration
+  status                  Show worktrees, servers and db
+  nuke                    Stop everything and remove all worktrees
+  projects                List project names
+  root                    Print the workspace root
+  completions             Emit zsh completions
+  help [command]          Show help
+
+Global flags:
+  --version, -v           Show the tx version
+  --help, -h              Show help for a command
+
+Examples:
+  tx wt add frontend/my_worktree_1
+  tx serv start frontend/my_worktree_1 -o
+  tx db run main "select now()"
+
+Run 'tx help <command>' for details.
 EOF
 }
 
-_help_serv() {
+_help_init() {
   cat << 'EOF'
-tx serv — Manage dev servers
+tx init — mark the current directory as the workspace root
 
 Usage:
-  tx serv                   List all running servers (default)
-  tx serv start             Start dev server (background by default)
-  tx serv start "<cmd>"     Start with custom command
-  tx serv stop              Stop server for current directory
-  tx serv stop all          Stop all tx-managed servers
-  tx serv restart           Restart server (same port)
-  tx serv open              Open dev URL in browser
-  tx serv log               Show server output log
+  tx init                 Create .tx/ here and mark this as the workspace root
 
-Flags:
-  -o, --open                Open browser after starting
-  -f, --front               Run in foreground
-  -p, --port N              Use specific port
-EOF
-}
+Projects are git repositories placed directly under the workspace root.
+Worktrees live in <root>/.worktrees/<project>/<name>.
 
-_help_tunnel() {
-  cat << 'EOF'
-tx tunnel — Manage SSH tunnels (ngrok)
-
-Usage:
-  tx tunnel                 Show tunnel status (default)
-  tx tunnel start           Start SSH tunnel
-  tx tunnel stop            Stop SSH tunnel
-
-Flags:
-  -c, --caffeinate          Prevent sleep while tunnel is open
-EOF
-}
-
-_help_db() {
-  cat << 'EOF'
-tx db — Manage background db process and run queries
-
-Usage:
-  tx db                     Show db process status (default)
-  tx db start               Start configured db command in background
-  tx db stop                Stop the db process
-  tx db log                 Show db process output
-  tx db run <alias> "SQL"   Run a SQL query against a configured database
-  tx db list                List configured database aliases
-
-Database config (~/.tx-databases):
-  One line per database: alias:host:port:dbname:user
-  Passwords are read from ~/.pgpass (see PostgreSQL docs).
-
-  Example ~/.tx-databases:
-    main:localhost:2223:mydb:myuser
-    reports:localhost:2224:reportsdb:myuser
+Related:
+  tx root                 Print the resolved workspace root
+  tx projects             List project names (one per line)
 EOF
 }
 
 _help_wt() {
   cat << 'EOF'
-tx wt — Manage git worktrees
+tx wt — manage git worktrees
 
 Usage:
-  tx wt                     List all worktrees (default)
-  tx wt add                 Create/reuse a git worktree
-  tx wt remove              Remove a worktree (and its server)
-  tx wt clean               Remove all worktrees
+  tx wt                              List worktrees (default)
+  tx wt add <project>/<name>         Create a worktree
+  tx wt remove [<target>...]         Remove one or more worktrees
+  tx wt list [<project>]             List worktrees, optionally for one project
 
 Flags:
-  -n, --name NAME           Worktree name
-  -b, --branch BRANCH       Branch to checkout (also used as worktree name if -n omitted, / → -)
-  -i, --install             Run install command after creating worktree (TX_INSTALL_CMD)
+  tx wt add
+    -b, --branch BRANCH   Branch to check out (defaults to the worktree name)
+    -i, --install         Run the install command after creating the worktree
+  tx wt remove
+    -f, --force           Remove even with uncommitted or unpushed changes
+    -y, --yes             Skip the confirmation prompt
+  tx wt list
+    --names               Print bare <project>/<name> lines (for scripts)
+
+A target is <project>/<worktree>, <project>, or omitted to infer from the
+current directory.
+
+Examples:
+  tx wt add frontend/my_worktree_1
+  tx wt add frontend/my_worktree_1 -b fix/login -i
+  tx wt remove frontend/my_worktree_1 -y
+  tx wt list frontend --names
 EOF
 }
 
-_help_code() {
+_help_serv() {
   cat << 'EOF'
-tx code — Launch code editors/agents (claude, tmux)
+tx serv — manage dev servers
 
 Usage:
-  tx code                   Launch in worktree (default), or repo root with -r
-  tx code attach [name]     Attach to tmux session (interactive picker if no name)
+  tx serv                            List all servers (default)
+  tx serv start [<target>] ["cmd"]   Start a dev server
+  tx serv stop [<target>]            Stop a server
+  tx serv stop all                   Stop every tx-managed server
+  tx serv restart [<target>]         Restart a server on its saved port
+  tx serv open [<target>]            Open the server URL in a browser
+  tx serv log [<target>]             Print the server log
 
-Flags:
-  -r, --root                Run in repo root instead of worktree
-  -t, --tunnel              Launch in tmux session
-  -n, --name NAME           Worktree/session name
-  -b, --branch BRANCH       Branch to checkout (also used as worktree name, / → -)
-  -a, --attach              Attach to existing session
-  -c, --caffeinate          Prevent sleep
-  -i, --install             Run install command after creating worktree (TX_INSTALL_CMD)
-  -s, --start               Run dev server after install (TX_START_CMD)
+Flags (start):
+  -o, --open              Open the URL in a browser once ready
+  -f, --front             Run in the foreground instead of the background
+  -p, --port N            Use a specific port instead of the next free one
+
+A target is <project>/<worktree>, <project>, or omitted to infer from the
+current directory. A trailing quoted string overrides the configured start
+command.
+
+Examples:
+  tx serv start frontend/my_worktree_1 -o
+  tx serv start frontend/my_worktree_1 -p 3000
+  tx serv start frontend/my_worktree_1 "npm run dev"
+  tx serv stop all
 EOF
 }
 
-_help_nuke() {
+_help_db() {
   cat << 'EOF'
-tx nuke — Stop everything and remove all worktrees
+tx db — manage the database process and query aliases
 
 Usage:
-  tx nuke                   Stop all servers, tunnels, db, remove worktrees (with confirmation)
+  tx db                     Show the db process status (default)
+  tx db start               Start the configured db command in the background
+  tx db stop                Stop the db process
+  tx db log                 Print the db process log
+  tx db list                List configured database aliases
+  tx db run <alias> "<SQL>" Run a query against an aliased database
+
+The db command is set with: tx config db "<command>"
+
+Aliases live in <root>/.tx/databases, one per line:
+  alias:host:port:dbname:user
+
+Passwords are read from ~/.pgpass (see the PostgreSQL docs).
+
+Examples:
+  tx db start
+  tx db run main "select now()"
+EOF
+}
+
+_help_config() {
+  cat << 'EOF'
+tx config — show or set configuration
+
+Usage:
+  tx config                          Show config for the current directory
+  tx config <project>                Show a project's effective config
+  tx config <key> [<value>]          Set a workspace-level value
+  tx config <project>/<key> [<value>] Set a project-level value
+  tx config <key> --unset            Remove a value
+
+Keys:
+  Project-settable:  port  start  url  branch  copy  install
+  Workspace-only:    db  auto_open
+
+Load order (later wins): built-in defaults → <root>/.tx/config →
+<root>/.tx/projects/<name>.conf
+
+Examples:
+  tx config start "npm run dev"
+  tx config frontend/port 4000
+  tx config db "ssh -L 5432:localhost:5432 dbhost"
+  tx config branch --unset
 EOF
 }
 
 _help_status() {
   cat << 'EOF'
-tx status — Show status of all managed processes
+tx status — show worktrees, servers and db
 
 Usage:
-  tx status                 Show sessions, servers, tunnel, db, and worktree status
+  tx status                 Show every project's worktrees and servers, plus db
+  tx status <project>       Restrict output to one project
 
-Sessions are listed globally (all tx tmux sessions across all projects).
+This is the default command when tx is run with no arguments.
+EOF
+}
+
+_help_nuke() {
+  cat << 'EOF'
+tx nuke — stop everything and remove all worktrees
+
+Usage:
+  tx nuke                   Stop all servers and db, remove every worktree
+  tx nuke <project>         Scope the teardown to a single project
+
+Flags:
+  -y, --yes                 Skip the confirmation prompt
+
+A scoped nuke leaves other projects and the workspace db untouched.
+
+Examples:
+  tx nuke frontend -y
 EOF
 }
 
 _help_completions() {
   cat << 'EOF'
-tx completions — Output zsh completion script
+tx completions — emit zsh completions
 
 Usage:
-  tx completions            Print zsh completions (eval or source in .zshrc)
-EOF
-}
+  tx completions            Print the zsh completion script
 
-_help_overview() {
-  cat << 'EOF'
-tx — modular CLI for isolated dev environments
-
-Usage: tx [command] [subcommand] [flags]
-        (no command = status)
-
-Flags:
-  --version, -v               Show version number
-
-Commands:
-  config                    Manage project configuration (.txrc)
-  status                    Show status (default when no command given)
-  serv                      Manage dev servers (list by default)
-  tunnel                    Manage SSH tunnels (status by default)
-  db                        Manage background db process (status by default)
-  wt                        Manage git worktrees (list by default)
-  code                      Launch code editors/agents (claude, tmux)
-  nuke                      Stop everything and remove all worktrees
-  completions               Output zsh completion script
-  help                      Show this help message
-
-Run 'tx help <command>' for details on a specific command.
-
-Examples:
-  tx                        Show status (default)
-  tx serv                   List running servers
-  tx serv start -o -p 3000  Start on port 3000, open browser
-  tx serv stop all          Kill all dev servers
-  tx wt add -n hotfix       Create worktree named "hotfix"
-  tx wt add -b fix/my-bug   Create worktree fix-my-bug on branch fix/my-bug
-  tx code -b fix/my-bug     Create worktree fix-my-bug on branch fix/my-bug
-  tx code -t                Create worktree + launch in tmux session
-  tx code attach hotfix     Reattach to tmux session
-  tx tunnel start -c        Start SSH tunnel with caffeinate
-  tx config start "npm start"  Set default start command
+Load it from your ~/.zshrc, for example:
+  source <(tx completions)
 EOF
 }
 
@@ -187,20 +214,16 @@ cmd_help() {
   fi
 
   case "$command" in
-    config)      _help_config ;;
-    serv)        _help_serv ;;
-    tunnel)      _help_tunnel ;;
-    db)          _help_db ;;
-    wt)          _help_wt ;;
-    code)        _help_code ;;
-    nuke)        _help_nuke ;;
-    status)      _help_status ;;
-    completions) _help_completions ;;
-    help)        echo "Usage: tx help [command]" ;;
-    *)
-      echo "tx help: unknown command '$command'"
-      echo "Run 'tx help' for a list of commands."
-      return 1
-      ;;
+    init)                 _help_init ;;
+    wt)                   _help_wt ;;
+    serv)                 _help_serv ;;
+    db)                   _help_db ;;
+    config)               _help_config ;;
+    status)               _help_status ;;
+    nuke)                 _help_nuke ;;
+    completions)          _help_completions ;;
+    root|projects)        _help_init ;;
+    help)                 echo "Usage: tx help [command]" ;;
+    *)                    _help_overview ;;
   esac
 }
