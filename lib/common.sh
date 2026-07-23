@@ -335,9 +335,11 @@ tx_open_browser() {
   ' "$url" 2>/dev/null || open "$url" 2>/dev/null
 }
 
-# Check if a process is alive by PID
+# Check if a process is alive by PID. kill -0 fails with EPERM for a live
+# process the caller cannot signal (e.g. running under a sandbox), which would
+# read as "dead" — fall back to ps before concluding that.
 tx_is_alive() {
-  kill -0 "$1" 2>/dev/null
+  kill -0 "$1" 2>/dev/null || ps -p "$1" >/dev/null 2>&1
 }
 
 # --- Targets ---

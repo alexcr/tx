@@ -63,5 +63,25 @@ tx_in "$WS" serv stop frontend/wt1 >/dev/null
 it "stop all reports when there is nothing"
 assert_contains "$(tx_in "$WS" serv stop all)" "No running servers"
 
+# A server whose process ignores TERM: the subshell parent dies but the
+# listener survives orphaned. stop must detect the survivor via the port,
+# escalate to KILL, and only then drop state.
+cat > "$WS/.tx/projects/frontend.conf" <<'EOF'
+TX_PORT_START="9800"
+TX_START_CMD="python3 -c 'import signal, os, http.server as h; signal.signal(signal.SIGTERM, signal.SIG_IGN); h.test(HandlerClass=h.SimpleHTTPRequestHandler, port=int(os.environ[\"PORT\"]))'"
+EOF
+
+it "stop kills a TERM-ignoring server via KILL escalation"
+tx_in "$WS" serv start frontend/wt1 >/dev/null
+out=$(tx_in "$WS" serv stop frontend/wt1); TX_STATUS=$?
+assert_ok "$TX_STATUS"
+assert_contains "$out" "Stopped"
+
+it "escalated stop releases the port"
+assert_eq "$(lsof -ti :9800 2>/dev/null | wc -l | tr -d ' ')" "0"
+
+it "escalated stop cleans up state files"
+assert_eq "$(ls "$WS/.tx/run/serv"/*.pid 2>/dev/null | wc -l | tr -d ' ')" "0"
+
 cleanup_workspace "$WS"
 finish

@@ -36,15 +36,42 @@ _serv_id_for_dir() {
 }
 
 _serv_kill_tree() {
-  local parent="$1" child children
+  local parent="$1" sig="${2:-TERM}" child children
   children=$(pgrep -P "$parent" 2>/dev/null) || true
   for child in $children; do
-    _serv_kill_tree "$child"
+    _serv_kill_tree "$child" "$sig"
   done
-  kill "$parent" 2>/dev/null || true
+  kill -s "$sig" "$parent" 2>/dev/null || true
 }
 
-# Stop the server registered for a directory. Returns 1 if there was none.
+# Signal the registered pid tree and anything holding the port.
+_serv_signal() {
+  local pid="$1" port="$2" sig="$3" p
+  tx_is_alive "$pid" && _serv_kill_tree "$pid" "$sig"
+  if [ -n "$port" ]; then
+    for p in $(lsof -ti :"$port" 2>/dev/null); do
+      kill -s "$sig" "$p" 2>/dev/null || true
+    done
+  fi
+}
+
+# Wait up to $3 seconds for the pid to die and the port to be released.
+_serv_wait_dead() {
+  local pid="$1" port="$2" timeout="$3" waited=0
+  while :; do
+    if ! tx_is_alive "$pid" \
+      && { [ -z "$port" ] || ! lsof -ti :"$port" >/dev/null 2>&1; }; then
+      return 0
+    fi
+    [ "$waited" -ge "$timeout" ] && return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+# Stop the server registered for a directory.
+# Returns 1 if there was none; 2 if its processes survived our signals, in
+# which case the state files are KEPT so the server stays visible to tx.
 _serv_stop_dir() {
   local dir="$1"
   local hash
@@ -53,17 +80,23 @@ _serv_stop_dir() {
   pid_file=$(_serv_file "$hash" pid)
   [ -f "$pid_file" ] || return 1
 
-  local pid
+  local pid port=""
   pid=$(cat "$pid_file")
-  tx_is_alive "$pid" && _serv_kill_tree "$pid"
-
-  local port_file port p
+  local port_file
   port_file=$(_serv_file "$hash" port)
-  if [ -f "$port_file" ]; then
-    port=$(cat "$port_file")
-    for p in $(lsof -ti :"$port" 2>/dev/null); do
-      kill "$p" 2>/dev/null || true
-    done
+  [ -f "$port_file" ] && port=$(cat "$port_file")
+
+  # TERM first; verify death before dropping state — kill can fail silently
+  # (e.g. a sandboxed caller lacks permission to signal), and cleaning state
+  # for a live server orphans it. Escalate to KILL once before giving up.
+  _serv_signal "$pid" "$port" TERM
+  if ! _serv_wait_dead "$pid" "$port" 3; then
+    _serv_signal "$pid" "$port" KILL
+    if ! _serv_wait_dead "$pid" "$port" 2; then
+      echo "tx: server for $(_serv_id_for_dir "$dir") is still running (PID $pid)." >&2
+      echo "    Could not kill it — state kept. Stop it manually and retry." >&2
+      return 2
+    fi
   fi
 
   rm -f "$(_serv_file "$hash" pid)" "$(_serv_file "$hash" port)" \
@@ -134,12 +167,13 @@ _serv_start() {
       tx_build_url "$existing_port"
       return 0
     fi
-    _serv_stop_dir "$dir"
+    _serv_stop_dir "$dir" || return 1
   fi
 
   local port
   if [ -n "$flag_port" ]; then
-    lsof -ti :"$flag_port" >/dev/null 2>&1 && tx_die "port $flag_port is already in use."
+    lsof -ti :"$flag_port" >/dev/null 2>&1 && tx_die "port $flag_port is already in use." \
+      "The holder is not a tx-managed server for this target. Find it: lsof -i :$flag_port"
     port="$flag_port"
   else
     port=$(tx_find_port)
@@ -218,16 +252,17 @@ _serv_start() {
 }
 
 _serv_stop() {
-  local dir="$1" id="$2"
-  if _serv_stop_dir "$dir"; then
-    echo "Stopped $id."
-  else
-    echo "No server running for $id."
-  fi
+  local dir="$1" id="$2" rc=0
+  _serv_stop_dir "$dir" || rc=$?
+  case "$rc" in
+    0) echo "Stopped $id." ;;
+    1) echo "No server running for $id." ;;
+    *) return 1 ;; # _serv_stop_dir already reported the failure
+  esac
 }
 
 _serv_stop_all() {
-  local found=0 pid_file hash dir_file dir
+  local found=0 failed=0 pid_file hash dir_file dir
   for pid_file in "$(_serv_dir)"/*.pid; do
     [ -f "$pid_file" ] || continue
     found=1
@@ -236,24 +271,31 @@ _serv_stop_all() {
     dir=""
     [ -f "$dir_file" ] && dir=$(cat "$dir_file")
     if [ -n "$dir" ]; then
-      _serv_stop_dir "$dir"
-      echo "Stopped $(_serv_id_for_dir "$dir")."
+      if _serv_stop_dir "$dir"; then
+        echo "Stopped $(_serv_id_for_dir "$dir")."
+      else
+        failed=1 # _serv_stop_dir already reported the failure
+      fi
     else
       rm -f "$(_serv_dir)/$hash".*
     fi
   done
   [ "$found" -eq 0 ] && echo "No running servers."
+  [ "$failed" -eq 0 ] || return 1
   return 0
 }
 
 _serv_restart() {
   local dir="$1" id="$2" flag_open="$3" flag_front="$4"
-  local hash port_file saved_port=""
+  local hash port_file saved_port="" rc=0
   hash=$(_serv_hash "$dir")
   port_file=$(_serv_file "$hash" port)
   [ -f "$port_file" ] && saved_port=$(cat "$port_file")
 
-  _serv_stop_dir "$dir" || true
+  _serv_stop_dir "$dir" || rc=$?
+  # "no server" (1) is fine for a restart; a failed kill (2) is not — starting
+  # on top of the survivor would fight it for the port.
+  [ "$rc" -ge 2 ] && return 1
   sleep 1
   _serv_start "$dir" "$id" "$flag_open" "$flag_front" "$saved_port" ""
 }

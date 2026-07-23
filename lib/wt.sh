@@ -324,7 +324,16 @@ _wt_remove_one() {
     fi
   fi
 
-  _serv_stop_dir "$dir" >/dev/null 2>&1 && echo "Stopped server for $id."
+  local stop_rc=0
+  _serv_stop_dir "$dir" >/dev/null 2>&1 || stop_rc=$?
+  if [ "$stop_rc" -ge 2 ]; then
+    # Removing the directory under a live server leaves orphaned watchers
+    # that recreate it with build output later.
+    echo "tx: could not stop the server for $id — refusing to remove its" >&2
+    echo "    worktree while it runs. Stop it (tx serv stop $id) and retry." >&2
+    return 1
+  fi
+  [ "$stop_rc" -eq 0 ] && echo "Stopped server for $id."
 
   git -C "$repo" worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
   git -C "$repo" worktree prune >/dev/null 2>&1 || true

@@ -61,13 +61,15 @@ cmd_nuke() {
   echo ""
   echo "=== Stopping servers ==="
   if [ -n "$only" ]; then
-    if _serv_stop_dir "$TX_WS_ROOT/$only" >/dev/null 2>&1; then
-      echo "  Stopped server for $only"
-    else
-      echo "  (none)"
-    fi
+    local stop_rc=0
+    _serv_stop_dir "$TX_WS_ROOT/$only" >/dev/null 2>&1 || stop_rc=$?
+    case "$stop_rc" in
+      0) echo "  Stopped server for $only" ;;
+      1) echo "  (none)" ;;
+      *) echo "  Failed  server for $only is still running (could not kill it)" >&2 ;;
+    esac
   else
-    _serv_stop_all
+    _serv_stop_all || true
   fi
 
   # The db is workspace-global, so only a full (unscoped) nuke stops it. Go
