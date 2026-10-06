@@ -121,6 +121,7 @@ Nothing is stored in `/tmp` or the home directory; all tx state lives under `<ro
 - **Browser opening:** macOS AppleScript to open Chrome on the same screen as the terminal, fallback to `open`.
 - **node_modules:** Not copied or symlinked — symlinks break yarn v1, copying is too slow. Use `--install/-i` on `tx wt add` to run `TX_INSTALL_CMD` (default: `yarn install`) automatically after worktree creation.
 - **File copying:** `TX_COPY` glob patterns expanded from the project root, preserving directory structure.
+- **Claude settings:** `wt add` symlinks the project's untracked `.claude/` into the worktree so it shares the permission allowlist, and adds `/.claude` once to the repo's shared `info/exclude`. A repo's `.claude/` ignore rule matches directories only, so without that the link shows as untracked and blocks `wt remove`. Skipped when the worktree checks out its own tracked `.claude/`.
 - **Port hashing:** MD5 of the absolute directory path for unique server identification per directory.
 
 ## Typical Workflows

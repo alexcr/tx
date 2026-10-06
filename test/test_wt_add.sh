@@ -72,6 +72,44 @@ assert_ok "$TX_STATUS"
 assert_eq "$(cat "$WS/.worktrees/frontend/globtest/config/real.json" 2>/dev/null)" '{"real":1}'
 assert_eq "$(cat "$WS/.worktrees/frontend/globtest/config/decoy.json" 2>/dev/null)" ""
 
+it "links the project's .claude into the worktree"
+rm -f "$WS/.tx/projects/frontend.conf"
+# A trailing-slash rule, as in real repos, matches the project's directory but
+# not the worktree's symlink.
+printf '.claude/\n' > "$WS/frontend/.gitignore"
+git -C "$WS/frontend" add .gitignore
+git -C "$WS/frontend" commit --quiet -m "ignore .claude"
+git -C "$WS/frontend" push --quiet origin HEAD
+mkdir -p "$WS/frontend/.claude"
+printf '{}\n' > "$WS/frontend/.claude/settings.local.json"
+out=$(tx_in "$WS" wt add frontend/claude1); TX_STATUS=$?
+assert_ok "$TX_STATUS"
+assert_eq "$(readlink "$WS/.worktrees/frontend/claude1/.claude")" "$WS/frontend/.claude"
+
+it "keeps the .claude link out of the worktree's git status"
+assert_eq "$(git -C "$WS/.worktrees/frontend/claude1" status --porcelain)" ""
+
+it "adds the .claude exclude rule only once"
+out=$(tx_in "$WS" wt add frontend/claude2); TX_STATUS=$?
+assert_ok "$TX_STATUS"
+assert_eq "$(grep -cxF '/.claude' "$WS/frontend/.git/info/exclude")" "1"
+
+it "removes a worktree with a .claude link without -f"
+out=$(tx_in "$WS" wt remove frontend/claude2 -y); TX_STATUS=$?
+assert_ok "$TX_STATUS"
+assert_no_dir "$WS/.worktrees/frontend/claude2"
+
+it "leaves info/exclude alone when the worktree checks out its own .claude"
+mkdir -p "$WS/backend/.claude"
+printf '{}\n' > "$WS/backend/.claude/settings.json"
+git -C "$WS/backend" add .claude
+git -C "$WS/backend" commit --quiet -m "track .claude"
+git -C "$WS/backend" push --quiet origin HEAD
+out=$(tx_in "$WS" wt add backend/claude3); TX_STATUS=$?
+assert_ok "$TX_STATUS"
+assert_dir "$WS/.worktrees/backend/claude3/.claude"
+assert_eq "$(grep -cxF '/.claude' "$WS/backend/.git/info/exclude" 2>/dev/null)" "0"
+
 it "requires a worktree name at the workspace root"
 out=$(tx_in "$WS" wt add); TX_STATUS=$?
 assert_fails "$TX_STATUS"

@@ -147,10 +147,20 @@ _wt_copy_files() {
 
 # Worktrees inherit the project's Claude settings.
 _wt_link_claude_config() {
-  local repo="$1" dir="$2"
+  local repo="$1" dir="$2" common exclude
   [ -d "$repo/.claude" ] || return 0
   [ -e "$dir/.claude" ] && return 0
   ln -s "$repo/.claude" "$dir/.claude"
+
+  # A `.claude/` ignore rule matches directories only, and git sees the link as
+  # a file, so it would show as untracked. info/exclude is shared by every
+  # worktree of the repo and is never committed.
+  common="$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd)" || return 0
+  exclude="$common/info/exclude"
+  grep -qxF '/.claude' "$exclude" 2>/dev/null && return 0
+  mkdir -p "$common/info"
+  [ -s "$exclude" ] && [ -n "$(tail -c 1 "$exclude")" ] && echo >> "$exclude"
+  echo '/.claude' >> "$exclude"
 }
 
 _wt_list() {
